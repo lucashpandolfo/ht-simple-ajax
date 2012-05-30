@@ -96,14 +96,12 @@ function ~a (~{~a, ~}callback) {
 
 
 
-(defun generate-prologue (processor)
+(defun generate-prologue (processor &key host port)
   "Creates a <script> ... </script> html element that contains all the
    client-side javascript code for the ajax communication. Include this 
    script in the <head> </head> of each html page"
   (apply #'concatenate 'string
-         `("<script type='text/javascript'>
-//<![CDATA[ 
-function fetchURI(uri, callback) {
+         `("function fetchURI(uri, callback) {
   var request;
   if (window.XMLHttpRequest) { request = new XMLHttpRequest(); }
   else {
@@ -129,7 +127,10 @@ function fetchURI(uri, callback) {
 }
 
 function ajax_call(func, callback, args) {
-  var uri = '" ,(server-uri processor) "/' + encodeURIComponent(func) + '/';
+  var uri = '" ,@(when host `("http://" ,host ":"))
+               ,(when port (with-output-to-string (*standard-output*)
+                             (princ port)))
+               ,(server-uri processor) "/' + encodeURIComponent(func) + '/';
   var i;
   if (args.length > 0) {
     uri += '?'
@@ -141,10 +142,7 @@ function ajax_call(func, callback, args) {
   fetchURI(uri, callback);
 }"
   ,@(loop for js being the hash-values of (js-fns processor)
-       collect js)
-  "
-//]]>
-</script>")))
+       collect js))))
 
 
 
