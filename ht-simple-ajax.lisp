@@ -77,31 +77,32 @@
      finally (return string)))
 
 
-(defmacro defun-ajax (name params (processor) &body body)
+(defmacro defun-ajax (name params (processor &optional (mode :xml)) &body body)
   "Declares a defun that can be called from a client page.
-Example: (defun-ajax func1 (arg1 arg2) (*ajax-processor*)
+Example: (defun-ajax func1 (arg1 arg2) (*ajax-processor* :json)
    (do-stuff))"
   (let ((js-fn (format nil "
 
 function ~a (~{~a, ~}callback) {
-    ajax_call('~a', callback, ~2:*[~{~a~^, ~}]);
+    ajax_~a_call('~a', callback, ~3:*[~{~a~^, ~}]);
 }" 
                        (concatenate 'string "ajax_" (make-js-symbol name))
-                       (mapcar #'make-js-symbol params) 
+                       (mapcar #'make-js-symbol params)
+                       (if (eq mode :json) "json" "xml")
                        name)))
     `(progn
        (defun ,name ,params ,@body)
-       (setf (gethash (symbol-name ',name) (lisp-fns ,processor)) ',name)
-       (setf (gethash (symbol-name ',name) (js-fns ,processor)) ',js-fn))))
+       (setf (gethash (symbol-name ',name) (lisp-fns ,processor)) '(,mode ,name))
+       (setf (gethash (symbol-name ',name) (js-fns ,processor))  '(,mode ,js-fn)))))
 
-
-
-(defun generate-prologue (processor &key host port)
+(defun generate-prologue (processor)
   "Creates a <script> ... </script> html element that contains all the
    client-side javascript code for the ajax communication. Include this 
    script in the <head> </head> of each html page"
   (apply #'concatenate 'string
-         `("function fetchURI(uri, callback) {
+         `("<script type='text/javascript'>
+//<![CDATA[ 
+function fetchURI(uri, callback) {
   var request;
   if (window.XMLHttpRequest) { request = new XMLHttpRequest(); }
   else {
@@ -115,7 +116,7 @@ function ~a (~{~a, ~}callback) {
   request.onreadystatechange = function() {
     if (request.readyState != 4) return;
     if (((request.status>=200) && (request.status<300)) || (request.status == 304)) {
-      var data = request.responseXML;
+      var data = request.responseText;
       if (callback!=null) { callback(data); }
     }
     else { 
@@ -126,11 +127,9 @@ function ~a (~{~a, ~}callback) {
   delete request;
 }
 
+
 function ajax_call(func, callback, args) {
-  var uri = '" ,@(when host `("http://" ,host ":"))
-               ,(when port (with-output-to-string (*standard-output*)
-                             (princ port)))
-               ,(server-uri processor) "/' + encodeURIComponent(func) + '/';
+  var uri = '" ,(server-uri processor) "/' + encodeURIComponent(func) + '/';
   var i;
   if (args.length > 0) {
     uri += '?'
@@ -140,11 +139,20 @@ function ajax_call(func, callback, args) {
     }
   }
   fetchURI(uri, callback);
+}
+
+function ajax_xml_call(func, callback, args) {
+  ajax_call(func, function (data) { callback(new DOMParser().parseFromString(data,'text/xml'));} , args);
+}
+
+function ajax_json_call(func, callback, args) {
+  ajax_call(func, function (data) { callback(eval('(' + data + ')'));} , args);
 }"
   ,@(loop for js being the hash-values of (js-fns processor)
-       collect js))))
-
-
+       collect (cadr js))
+  "
+//]]>
+</script>")))
 
 (defun call-lisp-function (processor)
   "This is called from hunchentoot on each ajax request. It parses the 
@@ -152,15 +160,23 @@ function ajax_call(func, callback, args) {
    the response."
   (let* ((fn-name (string-trim "/" (subseq (script-name* *request*)
                                            (length (server-uri processor)))))
-         (fn (gethash fn-name (lisp-fns processor)))
+         (mode-fn-pair (gethash fn-name (lisp-fns processor)))
+         (mode (car mode-fn-pair))
+         (fn (cadr mode-fn-pair))
          (args (mapcar #'cdr (get-parameters* *request*))))
     (unless fn
       (error "Error in call-lisp-function: no such function: ~A" fn-name))
     
     (setf (reply-external-format*) (reply-external-format processor))
-    (setf (content-type*) (content-type processor))
-    (no-cache)
-    (concatenate 'string "<?xml version=\"1.0\"?>
-<response xmlns='http://www.w3.org/1999/xhtml'>"
-                 (apply fn args) "</response>")))
 
+    (case mode
+      (:xml (setf (content-type*) (content-type processor))
+            (no-cache)
+            (concatenate 'string "<?xml version=\"1.0\"?>
+<response xmlns='http://www.w3.org/1999/xhtml'>"
+                         (apply fn args) "</response>"))
+      (:json (setf (content-type*) "application/json; charset=\"utf-8\"")
+             (no-cache)
+             (apply fn args))
+      (otherwise (error "Call mode (~a) not supperted" mode)))))
+       
