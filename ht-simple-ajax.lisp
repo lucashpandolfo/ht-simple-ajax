@@ -35,6 +35,8 @@
 
 (in-package :ht-simple-ajax)
 
+(defvar +xml-content-type+ "text/xml; charset=\"utf-8\"" "The http content type that is sent with each XML response")
+(defvar +json-content-type+ "application/json; charset=\"utf-8\"" "The http content type that is sent with each JSON response")
 
 (defclass ajax-processor ()
   ((lisp-fns 
@@ -52,9 +54,6 @@
     :initarg :server-uri :initform "/ajax" :accessor server-uri
     :type string
     :documentation "The uri which is used to handle ajax request")
-   (content-type :initarg :content-type :type string
-     :accessor content-type :initform "text/xml; charset=\"utf-8\""
-     :documentation "The http content type that is sent with each response")
    (reply-external-format 
     :initarg :reply-external-format :type flexi-streams::external-format
     :accessor reply-external-format :initform hunchentoot::+utf-8+
@@ -170,12 +169,12 @@ function ajax_json_call(func, callback, args) {
     (setf (reply-external-format*) (reply-external-format processor))
 
     (case mode
-      (:xml (setf (content-type*) (content-type processor))
+      (:xml (setf (content-type*) +xml-content-type+)
             (no-cache)
             (concatenate 'string "<?xml version=\"1.0\"?>
 <response xmlns='http://www.w3.org/1999/xhtml'>"
                          (apply fn args) "</response>"))
-      (:json (setf (content-type*) "application/json; charset=\"utf-8\"")
+      (:json (setf (content-type*) +json-content-type+)
              (no-cache)
              (apply fn args))
       (otherwise (error "Call mode (~a) not supperted" mode)))))
